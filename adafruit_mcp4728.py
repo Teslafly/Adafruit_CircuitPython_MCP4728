@@ -356,28 +356,26 @@ class Channel:
         Note: if using Vref.VDD, the vdd reference voltage must be set
         accurately for the output voltage to be accurate.
         """
-        # pylint:disable=protected-access
         if self._vref == 1:  # Vref.INTERNAL
             return 2.048 * self.gain * self.normalized_value
 
         # else
         # Vref.VDD, gain is not used when vref is set as vdd.
         assert (
-            self._dac._vdd_vref is not None
+            self._dac.vdd_vref is not None
         ), "vdd_vref must be set before using external ref with voltage set"
-        return self._dac._vdd_vref * self.normalized_value
-        # pylint:enable=protected-access
+        return self._dac.vdd_vref * self.normalized_value
+
 
     @voltage.setter()
     def voltage(self, value: float) -> None:
-        # pylint:disable=protected-access
         if self._vref == 1:  # Vref.INTERNAL
             max_val = 2.048 * self.gain
         else:
             assert (
-                self._dac._vdd_vref is not None
+                self._dac.vdd_vref is not None
             ), "vdd_vref must be set before using external ref with voltage set"
-            max_val = self._dac._vdd_vref
+            max_val = self._dac.vdd_vref
 
         if value < 0.0 or value > max_val:
             raise AttributeError(
@@ -385,7 +383,7 @@ class Channel:
             )
 
         self.normalized_value = value / max_val
-        # pylint:enable=protected-access
+
 
     @property
     def raw_value(self) -> int:
