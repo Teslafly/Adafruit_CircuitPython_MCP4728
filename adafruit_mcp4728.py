@@ -299,6 +299,7 @@ class Channel:
         self._raw_value = cache_page["value"]
         self._dac = dac_instance
         self.channel_index = index
+        self.ref_voltage = 2.048
 
     @property
     def normalized_value(self) -> float:
@@ -327,6 +328,32 @@ class Channel:
 
         # Scale from 16-bit to 12-bit value (quantization errors will occur!).
         self.raw_value = value >> 4
+
+    @property
+    def voltage(self) -> float:
+        """
+        Set DAC output voltage directly
+
+        Note: if using Vref.VDD, the vdd reference voltage must be set
+        accurately for the output voltage to be accurate.
+        """
+        if self._vref == Vref.INTERNAL:
+            return 2.048 * self.gain * self.normalized_value
+        else:
+            # Vref.VDD
+            # gain is not used when vref is set as vdd.
+            # todo, refactor ref voltage so it is set in the overall chip.
+            return self.ref_voltage * self.normalized_value
+
+    @voltage.setter()
+    def voltage(self, value: float) -> None:
+        if self._vref == Vref.INTERNAL:
+            max_val = 2.048 * self.gain
+        else:
+            max_val = self.ref_voltage
+        # todo, change this so scale is dynamically bound by vref/gain
+        if value < 0.0 or value > max_val:
+            raise AttributeError("`normalized_value` must be between 0.0 and 1.0")
 
     @property
     def raw_value(self) -> int:
@@ -369,5 +396,6 @@ class Channel:
     def vref(self, value: Literal[0, 1]) -> None:
         if not Vref.is_valid(value):
             raise AttributeError("range must be a `Vref`")
+
         self._vref = value
         self._dac.sync_vrefs()
