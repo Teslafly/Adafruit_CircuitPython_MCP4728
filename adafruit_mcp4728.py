@@ -124,10 +124,17 @@ class MCP4728:
 
     """
 
-    def __init__(self, i2c_bus: I2C, address: int = MCP4728_DEFAULT_ADDRESS) -> None:
+    def __init__(
+        self,
+        i2c_bus: I2C,
+        address: int = MCP4728_DEFAULT_ADDRESS,
+        vdd_vref: float = None,
+    ) -> None:
         self.i2c_device = i2c_device.I2CDevice(i2c_bus, address)
 
         raw_registers = self._read_registers()
+
+        self._vdd_vref = vdd_vref
 
         self.channel_a = Channel(self, self._cache_page(*raw_registers[0]), 0)
         self.channel_b = Channel(self, self._cache_page(*raw_registers[1]), 1)
@@ -253,6 +260,19 @@ class MCP4728:
         with self.i2c_device as i2c:
             i2c.write(buf)
 
+    @property
+    def vdd_vref(self) -> float:
+        """The vdd reference voltage when vref source is external.
+        clamped to part safe values."""
+        return self._vdd_vref
+
+    @vdd_vref.setter()
+    def vdd_vref(self, value: float) -> None:
+        assert (
+            2.7 <= value <= 5.5
+        ), f"vdd_vref '{value}'v must be within the operating voltage of 2.7v to 5.5v"
+        self._vdd_vref = value
+
     def reset(self) -> None:
         """Internal Reset similar to a Power-on Reset (POR).
         The contents of the EEPROM are loaded into each DAC input
@@ -299,7 +319,6 @@ class Channel:
         self._raw_value = cache_page["value"]
         self._dac = dac_instance
         self.channel_index = index
-        self.ref_voltage = 2.048
 
     @property
     def normalized_value(self) -> float:
@@ -337,23 +356,36 @@ class Channel:
         Note: if using Vref.VDD, the vdd reference voltage must be set
         accurately for the output voltage to be accurate.
         """
-        if self._vref == Vref.INTERNAL:
+        # pylint:disable=protected-access
+        if self._vref == 1:  # Vref.INTERNAL
             return 2.048 * self.gain * self.normalized_value
-        else:
-            # Vref.VDD
-            # gain is not used when vref is set as vdd.
-            # todo, refactor ref voltage so it is set in the overall chip.
-            return self.ref_voltage * self.normalized_value
+
+        # else
+        # Vref.VDD, gain is not used when vref is set as vdd.
+        assert (
+            self._dac._vdd_vref is not None
+        ), "vdd_vref must be set before using external ref with voltage set"
+        return self._dac._vdd_vref * self.normalized_value
+        # pylint:enable=protected-access
 
     @voltage.setter()
     def voltage(self, value: float) -> None:
-        if self._vref == Vref.INTERNAL:
+        # pylint:disable=protected-access
+        if self._vref == 1:  # Vref.INTERNAL
             max_val = 2.048 * self.gain
         else:
-            max_val = self.ref_voltage
-        # todo, change this so scale is dynamically bound by vref/gain
+            assert (
+                self._dac._vdd_vref is not None
+            ), "vdd_vref must be set before using external ref with voltage set"
+            max_val = self._dac._vdd_vref
+
         if value < 0.0 or value > max_val:
-            raise AttributeError("`normalized_value` must be between 0.0 and 1.0")
+            raise AttributeError(
+                f"channel `voltage` {value}v must be between 0.0 and {max_val}"
+            )
+
+        self.normalized_value = value / max_val
+        # pylint:enable=protected-access
 
     @property
     def raw_value(self) -> int:
