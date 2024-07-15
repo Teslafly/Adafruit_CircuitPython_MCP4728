@@ -54,7 +54,7 @@ _MCP4728_GENERAL_CALL_WAKEUP_COMMAND = 0x09
 _MCP4728_GENERAL_CALL_SOFTWARE_UPDATE_COMMAND = 0x08
 
 
-# this would probably be better as an Enum
+# this would probably be better as an Enum. code completion is broken in this form.
 class CV:
     """struct helper"""
 
@@ -78,7 +78,7 @@ class CV:
         return value in cls.string
 
     def __str__(self):
-        return str(self.string)
+        return self.string
 
 
 class Vref(CV):
@@ -99,10 +99,10 @@ class PwrState(CV):
 
 PwrState.add_values(
     (
-        ("Normal", 0, "VDD", None),
-        ("OFF 1K", 1, "OFF, 1kΩ pulldown", None),
-        ("OFF 100K", 2, "OFF, 100kΩ pulldown", None),
-        ("OFF 500K", 3, "OFF, 500kΩ pulldown", None),
+        ("Normal", 0, "Output ON", None),
+        ("OFF_1K", 1, "Output OFF, 1kΩ Pulldown", None),
+        ("OFF_100K", 2, "Output OFF, 100kΩ Pulldown", None),
+        ("OFF_500K", 3, "Output OFF, 500kΩ Pulldown", None),
     )
 )
 
@@ -155,11 +155,11 @@ class MCP4728:
         address: int = MCP4728_DEFAULT_ADDRESS,
         vdd_vref: float = None,
     ) -> None:
+
         self.i2c_device = i2c_device.I2CDevice(i2c_bus, address)
+        self._vdd_vref = vdd_vref
 
         raw_registers = self._read_registers()
-
-        self._vdd_vref = vdd_vref
 
         self.channel_a = Channel(self, self._cache_page(*raw_registers[0]), 0)
         self.channel_b = Channel(self, self._cache_page(*raw_registers[1]), 1)
@@ -169,7 +169,7 @@ class MCP4728:
         # indexable channel list
         self.channels = [self.channel_a, self.channel_b, self.channel_c, self.channel_d]
 
-    def __repr__(self):
+    def status(self):
         """human readable summary of dac states"""
 
         summary = f"MCP4728(\n   vdd_vref = {self.vdd_vref}\n"
@@ -177,12 +177,18 @@ class MCP4728:
             ch_name = self._channel_index_map[chan.channel_index]
             summary = (
                 summary
-                + f"   channel_{ch_name} voltage: {chan.voltage}v, "
-                + f"raw_value {chan.raw_value}/4095, vref:{Vref.string[chan.vref]}  "
+                + f"   channel_{ch_name} voltage: {chan.voltage:.4f}v, "
+                + f"raw_value {chan.raw_value:4}/4095, vref:{Vref.string[chan.vref]}  "
                 + f"gain:{chan.gain}, pwr_state:{PwrState.string[chan.power_state]} \n"
             )
             # todo, fix power state get. reader function does not seem to be implemented.
         return summary + ")"
+
+    def __repr__(self):
+        return self.status()
+
+    def __str__(self):
+        return self.status()
 
     @staticmethod
     def _get_flags(high_byte: int) -> Tuple[int, int, int]:
@@ -376,7 +382,7 @@ class Channel:
         index: int,
     ) -> None:
         self._vref = cache_page["vref"]
-        self._gain = cache_page["gain"]
+        self._gain = cache_page["gain"]  # register value. offset from real value
         self._raw_value = cache_page["value"]
         self._power_state = cache_page["power_state"]
         self._dac = dac_instance
@@ -462,13 +468,13 @@ class Channel:
 
         With gain set to 1, the output voltage goes from 0v to 2.048V. If a channel's gain is set
         to 2, the voltage goes from 0V to 4.096V. :attr:`gain` Must be 1 or 2"""
-        return int(self._gain)
+        return self._gain + 1  # convert bit value to numerical gain
 
     @gain.setter
     def gain(self, value: Literal[1, 2]) -> None:
         if not value in (1, 2):
             raise AttributeError("`gain` must be 1 or 2")
-        self._gain = value - 1
+        self._gain = value - 1  # convert numarical gain 1,2 to 0,1 gain bit
         self._dac.sync_gains()
 
     @property
