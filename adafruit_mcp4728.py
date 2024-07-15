@@ -500,5 +500,5 @@ class Channel:
         if not PwrState.is_valid(value):
             raise AttributeError("range must be a `Vref`")
 
-        self.self._power_state = value
+        self._power_state = value
         self._dac.sync_pd_sel()
