@@ -36,6 +36,7 @@ try:
     from typing import Dict, Iterable, Iterator, List, Optional, Tuple
     from typing_extensions import Literal
     from busio import I2C
+    from digitalio import DigitalInOut
 except ImportError:
     pass
 
@@ -153,11 +154,16 @@ class MCP4728:
         self,
         i2c_bus: I2C,
         address: int = MCP4728_DEFAULT_ADDRESS,
+        ldac_pin: DigitalInOut = None,
+        rdy_pin: DigitalInOut = None,
         vdd_vref: float = None,
+
     ) -> None:
 
         self.i2c_device = i2c_device.I2CDevice(i2c_bus, address)
         self._vdd_vref = vdd_vref
+        self._ldac_pin = ldac_pin
+        self._rdy_pin = rdy_pin
 
         raw_registers = self._read_registers()
 
