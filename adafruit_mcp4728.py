@@ -266,7 +266,7 @@ class MCP4728:
         clamped to part safe values."""
         return self._vdd_vref
 
-    @vdd_vref.setter()
+    @vdd_vref.setter
     def vdd_vref(self, value: float) -> None:
         assert (
             2.7 <= value <= 5.5
@@ -367,7 +367,7 @@ class Channel:
         return self._dac.vdd_vref * self.normalized_value
 
 
-    @voltage.setter()
+    @voltage.setter
     def voltage(self, value: float) -> None:
         if self._vref == 1:  # Vref.INTERNAL
             max_val = 2.048 * self.gain
