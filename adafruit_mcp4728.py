@@ -174,14 +174,7 @@ class MCP4728:
 
         summary = f"MCP4728(\n   vdd_vref = {self.vdd_vref}\n"
         for chan in self.channels:
-            ch_name = self._channel_index_map[chan.channel_index]
-            summary = (
-                summary
-                + f"   channel_{ch_name} voltage: {chan.voltage:.4f}v, "
-                + f"raw_value {chan.raw_value:4}/4095, vref:{Vref.string[chan.vref]}  "
-                + f"gain:{chan.gain}, pwr_state:{PwrState.string[chan.power_state]} \n"
-            )
-            # todo, fix power state get. reader function does not seem to be implemented.
+            summary = summary + "   " + chan.status() + "\n"
         return summary + ")"
 
     def __repr__(self):
@@ -387,6 +380,23 @@ class Channel:
         self._power_state = cache_page["power_state"]
         self._dac = dac_instance
         self.channel_index = index
+
+    def status(self):
+        """human readable summary of dac channel"""
+        ch_name = self._dac._channel_index_map[self.channel_index]
+        summary = (
+            f"channel_{ch_name}( voltage: {self.voltage:.4f}v, "
+            + f"raw_value {self.raw_value:4}/4095, vref:{Vref.string[self.vref]}  "
+            + f"gain:{self.gain}, pwr_state:{PwrState.string[self.power_state]} )"
+        )
+
+        return summary
+
+    def __repr__(self):
+        return self.status()
+
+    def __str__(self):
+        return self.status()
 
     @property
     def normalized_value(self) -> float:
