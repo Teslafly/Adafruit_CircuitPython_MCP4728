@@ -54,6 +54,7 @@ _MCP4728_GENERAL_CALL_WAKEUP_COMMAND = 0x09
 _MCP4728_GENERAL_CALL_SOFTWARE_UPDATE_COMMAND = 0x08
 
 
+# this would probably be better as an Enum
 class CV:
     """struct helper"""
 
@@ -76,6 +77,9 @@ class CV:
         """Returns true if the given value is a member of the CV"""
         return value in cls.string
 
+    def __str__(self):
+        return str(self.string)
+
 
 class Vref(CV):
     """Options for ``vref``"""
@@ -85,6 +89,20 @@ Vref.add_values(
     (
         ("VDD", 0, "VDD", None),
         ("INTERNAL", 1, "Internal 2.048V", None),
+    )
+)
+
+
+class PwrState(CV):
+    """options for channel power state"""
+
+
+PwrState.add_values(
+    (
+        ("Normal", 0, "VDD", None),
+        ("OFF 1K", 1, "OFF, 1kΩ pulldown", None),
+        ("OFF 100K", 2, "OFF, 100kΩ pulldown", None),
+        ("OFF 500K", 3, "OFF, 500kΩ pulldown", None),
     )
 )
 
@@ -124,6 +142,13 @@ class MCP4728:
 
     """
 
+    _channel_index_map = {
+        0: "a",
+        1: "b",
+        2: "c",
+        3: "d",
+    }
+
     def __init__(
         self,
         i2c_bus: I2C,
@@ -141,6 +166,24 @@ class MCP4728:
         self.channel_c = Channel(self, self._cache_page(*raw_registers[2]), 2)
         self.channel_d = Channel(self, self._cache_page(*raw_registers[3]), 3)
 
+        # indexable channel list
+        self.channels = [self.channel_a, self.channel_b, self.channel_c, self.channel_d]
+
+    def __repr__(self):
+        """human readable summary of dac states"""
+
+        summary = f"MCP4728(\n   vdd_vref = {self.vdd_vref}\n"
+        for chan in self.channels:
+            ch_name = self._channel_index_map[chan.channel_index]
+            summary = (
+                summary
+                + f"   channel_{ch_name} voltage: {chan.voltage}v, "
+                + f"raw_value {chan.raw_value}/4095, vref:{Vref.string[chan.vref]}  "
+                + f"gain:{chan.gain}, pwr_state:{PwrState.string[chan.power_state]} \n"
+            )
+            # todo, fix power state get. reader function does not seem to be implemented.
+        return summary + ")"
+
     @staticmethod
     def _get_flags(high_byte: int) -> Tuple[int, int, int]:
         vref = (high_byte & 1 << 7) > 0
@@ -148,6 +191,8 @@ class MCP4728:
         power_state = (high_byte & 0b011 << 5) >> 5
         return (vref, gain, power_state)
 
+    # todo, as this dac can have nonvolatile settings,
+    # get and populate the cache pages from dac upon first connection.
     @staticmethod
     def _cache_page(
         value: int, vref: int, gain: int, power_state: int
@@ -223,6 +268,21 @@ class MCP4728:
         with self.i2c_device as i2c:
             i2c.write(buf)
 
+    def sync_pd_sel(self) -> None:
+        """Syncs the power down select bits with the DAC"""
+
+        # sync_setter_command = 0b11000000
+        # sync_setter_command |= self.channel_a.gain << 3
+        # sync_setter_command |= self.channel_b.gain << 2
+        # sync_setter_command |= self.channel_c.gain << 1
+        # sync_setter_command |= self.channel_d.gain
+
+        buf = bytearray(1)
+        pack_into(">B", buf, 0, sync_setter_command)
+
+        with self.i2c_device as i2c:
+            i2c.write(buf)
+
     def _set_value(self, channel: "Channel") -> None:
         channel_bytes = self._generate_bytes_with_flags(channel)
 
@@ -264,6 +324,7 @@ class MCP4728:
     def vdd_vref(self) -> float:
         """The vdd reference voltage when vref source is external.
         clamped to part safe values."""
+        assert self._vdd_vref is not None, "vdd_vref must be set before usage."
         return self._vdd_vref
 
     @vdd_vref.setter
@@ -317,6 +378,7 @@ class Channel:
         self._vref = cache_page["vref"]
         self._gain = cache_page["gain"]
         self._raw_value = cache_page["value"]
+        self._power_state = cache_page["power_state"]
         self._dac = dac_instance
         self.channel_index = index
 
@@ -361,20 +423,13 @@ class Channel:
 
         # else
         # Vref.VDD, gain is not used when vref is set as vdd.
-        assert (
-            self._dac.vdd_vref is not None
-        ), "vdd_vref must be set before using external ref with voltage set"
         return self._dac.vdd_vref * self.normalized_value
-
 
     @voltage.setter
     def voltage(self, value: float) -> None:
         if self._vref == 1:  # Vref.INTERNAL
             max_val = 2.048 * self.gain
         else:
-            assert (
-                self._dac.vdd_vref is not None
-            ), "vdd_vref must be set before using external ref with voltage set"
             max_val = self._dac.vdd_vref
 
         if value < 0.0 or value > max_val:
@@ -383,7 +438,6 @@ class Channel:
             )
 
         self.normalized_value = value / max_val
-
 
     @property
     def raw_value(self) -> int:
@@ -408,7 +462,7 @@ class Channel:
 
         With gain set to 1, the output voltage goes from 0v to 2.048V. If a channel's gain is set
         to 2, the voltage goes from 0V to 4.096V. :attr:`gain` Must be 1 or 2"""
-        return self._gain
+        return int(self._gain)
 
     @gain.setter
     def gain(self, value: Literal[1, 2]) -> None:
@@ -429,3 +483,16 @@ class Channel:
 
         self._vref = value
         self._dac.sync_vrefs()
+
+    @property
+    def power_state(self) -> Literal[0, 1]:
+        """Sets the DAC's voltage reference source. Must be a ``VREF``"""
+        return self._power_state
+
+    @power_state.setter
+    def power_state(self, value: Literal[0, 1]) -> None:
+        if not PwrState.is_valid(value):
+            raise AttributeError("range must be a `Vref`")
+
+        self.self._power_state = value
+        self._dac.sync_pd_sel()
