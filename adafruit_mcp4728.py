@@ -271,50 +271,40 @@ class MCP4728:
 
     def sync_vrefs(self) -> None:
         """Syncs the driver's vref state with the DAC"""
-        gain_setter_command = 0b100 << 5
-        gain_setter_command |= self.channel_a.vref << 3
-        gain_setter_command |= self.channel_b.vref << 2
-        gain_setter_command |= self.channel_c.vref << 1
-        gain_setter_command |= self.channel_d.vref
-
         buf = bytearray(1)
-        pack_into(">B", buf, 0, gain_setter_command)
+
+        buf[0] = 0b1000 << 4
+        buf[0] |= self.channel_a._vref << 3
+        buf[0] |= self.channel_b._vref << 2
+        buf[0] |= self.channel_c._vref << 1
+        buf[0] |= self.channel_d._vref << 0
+
         with self.i2c_device as i2c:
             i2c.write(buf)
 
     def sync_gains(self) -> None:
         """Syncs the driver's gain state with the DAC"""
 
-        sync_setter_command = 0b110 << 5
-        sync_setter_command |= self.channel_a.gain << 3
-        sync_setter_command |= self.channel_b.gain << 2
-        sync_setter_command |= self.channel_c.gain << 1
-        sync_setter_command |= self.channel_d.gain
-
         buf = bytearray(1)
-        pack_into(">B", buf, 0, sync_setter_command)
+
+        buf[0] = 0b1100 << 4
+        buf[0] |= self.channel_a._gain << 3
+        buf[0] |= self.channel_b._gain << 2
+        buf[0] |= self.channel_c._gain << 1
+        buf[0] |= self.channel_d._gain << 0
 
         with self.i2c_device as i2c:
             i2c.write(buf)
 
     def sync_pd_sel(self) -> None:
         """Syncs the power down select bits with the DAC"""
+        buf = bytearray(2)
 
-        # todo: untested
-        sync_setter_command = 0b101 << (5 + 8)
-        sync_setter_command |= self.channel_a._power_state << 10
-        sync_setter_command |= self.channel_b._power_state << 8
-        sync_setter_command |= self.channel_c._power_state << 6
-        sync_setter_command |= self.channel_d._power_state << 4
-
-        # breakpoint()
-        # import pdb
-
-        # pdb.set_trace()
-
-        # buf = bytearray(2)
-        # pack_into(">B", buf, 0, sync_setter_command)
-        buf = sync_setter_command.to_bytes(2, "big")
+        buf[1] = 0b1010 << (4)
+        buf[1] |= self.channel_a._power_state << 2
+        buf[1] |= self.channel_b._power_state << 0
+        buf[0] |= self.channel_c._power_state << 6
+        buf[0] |= self.channel_d._power_state << 4
 
         with self.i2c_device as i2c:
             i2c.write(buf)
@@ -328,6 +318,13 @@ class MCP4728:
         output_buffer = bytearray([write_command_byte])
         output_buffer.extend(channel_bytes)
 
+        print(channel_bytes)
+
+        print(output_buffer[0])
+        print(bin(output_buffer[0]))
+        print(bin(output_buffer[1]))
+        print(bin(output_buffer[2]))
+
         with self.i2c_device as i2c:
             i2c.write(output_buffer)
 
@@ -336,8 +333,9 @@ class MCP4728:
         buf = bytearray(2)
         pack_into(">H", buf, 0, channel.raw_value)
 
-        buf[0] |= channel.vref << 7
-        buf[0] |= channel.gain << 4
+        buf[0] |= (channel.vref & 0b1) << 7
+        buf[0] |= (channel.power_state & 0b11) << 5
+        buf[0] |= (channel.gain & 0b1) << 4
 
         return buf
 
