@@ -89,7 +89,7 @@ class Vref(CV):
 Vref.add_values(
     (
         ("VDD", 0, "VDD", None),
-        ("INTERNAL", 1, "Internal 2.048V", None),
+        ("INTERNAL", 1, "Internal_2.048V", None),
     )
 )
 
@@ -157,7 +157,6 @@ class MCP4728:
         ldac_pin: DigitalInOut = None,
         rdy_pin: DigitalInOut = None,
         vdd_vref: float = None,
-
     ) -> None:
 
         self.i2c_device = i2c_device.I2CDevice(i2c_bus, address)
@@ -193,18 +192,22 @@ class MCP4728:
     def _get_flags(high_byte: int) -> Tuple[int, int, int]:
         vref = (high_byte & 1 << 7) > 0
         gain = (high_byte & 1 << 4) > 0
-        power_state = (high_byte & 0b011 << 5) >> 5
+        power_state = (high_byte & 0b11 << 5) >> 5
         return (vref, gain, power_state)
 
-    # todo, as this dac can have nonvolatile settings,
-    # get and populate the cache pages from dac upon first connection.
     @staticmethod
     def _cache_page(
         value: int, vref: int, gain: int, power_state: int
     ) -> Dict[str, int]:
         return {"value": value, "vref": vref, "gain": gain, "power_state": power_state}
 
-    def _read_registers(self) -> List[Tuple[int, int, int, int]]:
+    def _read_registers(
+        self, read_eeprom: bool = False
+    ) -> List[Tuple[int, int, int, int]]:
+        """
+        reads all device registers
+        set read_eeprom = True to read the poweron eeprom values.
+        """
         buf = bytearray(24)
 
         with self.i2c_device as i2c:
@@ -214,14 +217,35 @@ class MCP4728:
         # and 3 for the eeprom. Here we only care about the output register so we throw out
         # the eeprom values as 'n/a'
         current_values = []
-        # pylint:disable=unused-variable
-        for header, high_byte, low_byte, na_1, na_2, na_3 in self._chunk(buf, 6):
-            # pylint:enable=unused-variable
+
+        for (
+            header,
+            high_byte,
+            low_byte,
+            eeprom_header,
+            eeprom_high_byte,
+            eeprom_low_byte,
+        ) in self._chunk(buf, 6):
+
+            if read_eeprom:
+                header = eeprom_header
+                high_byte = eeprom_high_byte
+                low_byte = eeprom_low_byte
+
             value = (high_byte & 0b00001111) << 8 | low_byte
             vref, gain, power_state = self._get_flags(high_byte)
             current_values.append((value, vref, gain, power_state))
 
         return current_values
+
+    def refresh_state(self) -> List[Tuple[int, int, int, int]]:
+        """re-reads registers as if on startup if states have becone unsynced."""
+        raw_registers = self._read_registers()
+
+        self.channel_a.refresh(self._cache_page(*raw_registers[0]))
+        self.channel_b.refresh(self._cache_page(*raw_registers[1]))
+        self.channel_c.refresh(self._cache_page(*raw_registers[2]))
+        self.channel_d.refresh(self._cache_page(*raw_registers[3]))
 
     def save_settings(self) -> None:
         """Saves the currently selected values, Vref, and gain selections for each channel
@@ -247,7 +271,7 @@ class MCP4728:
 
     def sync_vrefs(self) -> None:
         """Syncs the driver's vref state with the DAC"""
-        gain_setter_command = 0b10000000
+        gain_setter_command = 0b100 << 5
         gain_setter_command |= self.channel_a.vref << 3
         gain_setter_command |= self.channel_b.vref << 2
         gain_setter_command |= self.channel_c.vref << 1
@@ -261,7 +285,7 @@ class MCP4728:
     def sync_gains(self) -> None:
         """Syncs the driver's gain state with the DAC"""
 
-        sync_setter_command = 0b11000000
+        sync_setter_command = 0b110 << 5
         sync_setter_command |= self.channel_a.gain << 3
         sync_setter_command |= self.channel_b.gain << 2
         sync_setter_command |= self.channel_c.gain << 1
@@ -276,14 +300,21 @@ class MCP4728:
     def sync_pd_sel(self) -> None:
         """Syncs the power down select bits with the DAC"""
 
-        # sync_setter_command = 0b11000000
-        # sync_setter_command |= self.channel_a.gain << 3
-        # sync_setter_command |= self.channel_b.gain << 2
-        # sync_setter_command |= self.channel_c.gain << 1
-        # sync_setter_command |= self.channel_d.gain
+        # todo: untested
+        sync_setter_command = 0b101 << (5 + 8)
+        sync_setter_command |= self.channel_a._power_state << 10
+        sync_setter_command |= self.channel_b._power_state << 8
+        sync_setter_command |= self.channel_c._power_state << 6
+        sync_setter_command |= self.channel_d._power_state << 4
 
-        buf = bytearray(1)
-        pack_into(">B", buf, 0, sync_setter_command)
+        # breakpoint()
+        # import pdb
+
+        # pdb.set_trace()
+
+        # buf = bytearray(2)
+        # pack_into(">B", buf, 0, sync_setter_command)
+        buf = sync_setter_command.to_bytes(2, "big")
 
         with self.i2c_device as i2c:
             i2c.write(buf)
@@ -345,6 +376,7 @@ class MCP4728:
         and output registers immediately"""
 
         self._general_call(_MCP4728_GENERAL_CALL_RESET_COMMAND)
+        self.refresh_state()
 
     def wakeup(self) -> None:
         """Reset the Power-Down bits (PD1, PD0 = 0,0) and
@@ -380,19 +412,22 @@ class Channel:
         cache_page: Dict[str, int],
         index: int,
     ) -> None:
-        self._vref = cache_page["vref"]
-        self._gain = cache_page["gain"]  # register value. offset from real value
-        self._raw_value = cache_page["value"]
-        self._power_state = cache_page["power_state"]
         self._dac = dac_instance
         self.channel_index = index
+        self.refresh(cache_page)
+
+    def refresh(self, cache_page: Dict[str, int]) -> None:
+        self._raw_value = cache_page["value"]
+        self._vref = cache_page["vref"]
+        self._gain = cache_page["gain"]  # register value. offset from real value
+        self._power_state = cache_page["power_state"]
 
     def status(self):
         """human readable summary of dac channel"""
         ch_name = self._dac._channel_index_map[self.channel_index]
         summary = (
             f"channel_{ch_name}( voltage: {self.voltage:.4f}v, "
-            + f"raw_value {self.raw_value:4}/4095, vref:{Vref.string[self.vref]}  "
+            + f"raw_value:{self.raw_value:4}/4095, vref:{Vref.string[self.vref]}, "
             + f"gain:{self.gain}, pwr_state:{PwrState.string[self.power_state]} )"
         )
 
@@ -514,7 +549,7 @@ class Channel:
     @power_state.setter
     def power_state(self, value: Literal[0, 1]) -> None:
         if not PwrState.is_valid(value):
-            raise AttributeError("range must be a `Vref`")
+            raise AttributeError("Must pull power state from PwrState object. Or 0-3")
 
         self._power_state = value
         self._dac.sync_pd_sel()
