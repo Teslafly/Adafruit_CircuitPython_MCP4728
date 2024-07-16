@@ -333,9 +333,9 @@ class MCP4728:
         buf = bytearray(2)
         pack_into(">H", buf, 0, channel.raw_value)
 
-        buf[0] |= (channel.vref & 0b1) << 7
-        buf[0] |= (channel.power_state & 0b11) << 5
-        buf[0] |= (channel.gain & 0b1) << 4
+        buf[0] |= (channel._vref & 0b1) << 7
+        buf[0] |= (channel._power_state & 0b11) << 5
+        buf[0] |= (channel._gain & 0b1) << 4
 
         return buf
 
