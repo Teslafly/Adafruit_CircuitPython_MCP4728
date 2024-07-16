@@ -318,13 +318,6 @@ class MCP4728:
         output_buffer = bytearray([write_command_byte])
         output_buffer.extend(channel_bytes)
 
-        print(channel_bytes)
-
-        print(output_buffer[0])
-        print(bin(output_buffer[0]))
-        print(bin(output_buffer[1]))
-        print(bin(output_buffer[2]))
-
         with self.i2c_device as i2c:
             i2c.write(output_buffer)
 
